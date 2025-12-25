@@ -1,0 +1,18 @@
+{
+  "modules": [
+    "volume",
+    "battery",
+    "cputemp",
+    "date",
+    "time"
+  ],
+  "online_modules": [
+    "weather",
+    "internet"
+  ],
+  "delay": 0.05,
+  "custom_dir": "/home/$USER/.config/dwmbar/modules/custom/",
+  "separator": " | ",
+  "right_padding": " ",
+  "left_padding": " "
+}

@@ -1,0 +1,170 @@
+#!/bin/bash
+# Copyright 2019 Archie Hilton <archie.hilton1@gmail.com>
+
+# This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+VERSION="1.0"
+
+DEFAULT_CONFIG_DIR="/usr/share/dwmbar"
+export DEFAULT_CONFIG_DIR
+DEFAULT_MODULES_DIR="$DEFAULT_CONFIG_DIR/modules/"
+export DEFAULT_MODULES_DIR
+DEFAULT_BAR_LOCATION="$DEFAULT_CONFIG_DIR/bar.sh"
+export DEFAULT_BAR_LOCATION
+DEFAULT_CONFIG_LOCATION="$DEFAULT_CONFIG_DIR/config"
+export DEFAULT_CONFIG_LOCATION
+SYNC_SCRIPT="$DEFAULT_CONFIG_DIR/config-sync.sh"
+export SYNC_SCRIPT
+
+CONFIG_DIR="/home/$USER/.config/dwmbar/"
+export CONFIG_DIR
+
+CUSTOM_DIR="$CONFIG_DIR/modules/custom/"
+export CUSTOM_DIR
+
+# Prefer JSON config if jq is available and file exists
+JSON_CONFIG="$CONFIG_DIR/config.json"
+BASH_CONFIG="$CONFIG_DIR/config"
+
+if command -v jq >/dev/null 2>&1 && [[ -f "$JSON_CONFIG" ]]; then
+	CONFIG_FILE="$JSON_CONFIG"
+elif [[ -f "$BASH_CONFIG" ]]; then
+	CONFIG_FILE="$BASH_CONFIG"
+else
+	CONFIG_FILE="$DEFAULT_CONFIG_LOCATION"
+fi
+export CONFIG_FILE
+
+CACHE_DIR="$HOME/.cache/dwmbar/"
+export CACHE_DIR
+
+INTERNET=1 # No internet
+export INTERNET
+
+print_help(){
+	echo "dwmbar $VERSION
+-v	Display this help message.
+-c	Copy default files to /home/$USER/.config/dwmbar
+"
+}
+
+copy_usr_to_home(){
+	mkdir -p "$CUSTOM_DIR"
+	cp -r "$DEFAULT_CONFIG_LOCATION" "$CONFIG_DIR"
+	# Also copy JSON config if available
+	if [[ -f "$DEFAULT_CONFIG_DIR/config.json" ]]; then
+		cp -r "$DEFAULT_CONFIG_DIR/config.json" "$CONFIG_DIR"
+	fi
+	# Copy sync script for manual use
+	if [[ -f "$SYNC_SCRIPT" ]]; then
+		cp "$SYNC_SCRIPT" "$CONFIG_DIR/"
+	fi
+}
+
+check_files(){
+	if [[ ! -d "$DEFAULT_CONFIG_DIR" ]]; then
+		echo "$DEFAULT_CONFIG_DIR does not exist." > /dev/stderr
+		exit 1
+	fi
+
+	if [[ ! -d "$DEFAULT_MODULES_DIR" ]]; then
+		echo "$DEFAULT_MODULES_DIR does not exist." > /dev/stderr
+		exit 1
+	fi
+
+    if [[ ! -d "$CACHE_DIR" ]]; then
+		mkdir -p "$CACHE_DIR"
+    fi
+
+	if [[ ! -f "$DEFAULT_BAR_LOCATION" ]]; then
+		echo "$DEFAULT_BAR_LOCATION does not exist." > /dev/stderr
+		exit 1
+	fi
+
+    if [[ ! -f "$DEFAULT_CONFIG_LOCATION" ]]; then
+        echo "$DEFAULT_CONFIG_LOCATION does not exist." > /dev/stderr
+        exit 1
+    fi
+}
+
+load_config() {
+	if [[ "$CONFIG_FILE" == *.json ]]; then
+		MODULES=$(jq -r '.modules | join(" ")' "$CONFIG_FILE")
+		ONLINE_MODULES=$(jq -r '.online_modules | join(" ")' "$CONFIG_FILE")
+		DELAY=$(jq -r '.delay // 0.05' "$CONFIG_FILE")
+		SEPARATOR=$(jq -r '.separator // " | "' "$CONFIG_FILE")
+		LEFT_PADDING=$(jq -r '.left_padding // " "' "$CONFIG_FILE")
+		RIGHT_PADDING=$(jq -r '.right_padding // " "' "$CONFIG_FILE")
+		CUSTOM_DIR=$(jq -r '.custom_dir' "$CONFIG_FILE")
+		CUSTOM_DIR="${CUSTOM_DIR/#\~/$HOME}"
+		CUSTOM_DIR="${CUSTOM_DIR/\$USER/$USER}"
+		CUSTOM_DIR="${CUSTOM_DIR/\$HOME/$HOME}"
+		[[ -z "$CUSTOM_DIR" ]] && CUSTOM_DIR="$HOME/.config/dwmbar/modules/custom/"
+	else
+		# shellcheck source=/dev/null
+		source "$CONFIG_FILE"
+	fi
+	
+	export SEPARATOR
+	export MODULES
+	export ONLINE_MODULES
+	export DELAY
+	export LEFT_PADDING
+	export RIGHT_PADDING
+	export CUSTOM_DIR
+}
+
+while getopts 'vc' flag; do
+	case "${flag}" in
+		v) 	print_help
+			exit 0				;;
+		c)	copy_usr_to_home
+			exit 0				;;
+        *)  print_help
+            exit 1              ;;
+	esac
+done
+
+check_internet() {
+        if command -v ping >/dev/null 2>&1; then
+            ping -c 1 -W 1 1.1.1.1 >/dev/null 2>&1 && echo 0 || echo 1
+        elif command -v wget >/dev/null 2>&1; then
+            wget --spider -q --timeout=2 https://www.google.com && echo 0 || echo 1
+        else
+            echo 1
+        fi
+}
+
+check_files
+
+# Run config sync once at startup to ensure configs are in sync
+if [[ -x "$SYNC_SCRIPT" ]]; then
+    "$SYNC_SCRIPT" 2>/dev/null || true
+fi
+
+load_config
+
+while :; do
+	date=$(date +'%S')
+	if [ $(( 10#$date % 5 )) -eq 0 ]; then
+		INTERNET=$(check_internet)
+		export INTERNET
+		# Sync again periodically in case user edits config
+		if [[ -x "$SYNC_SCRIPT" ]]; then
+		    "$SYNC_SCRIPT" 2>/dev/null || true
+		fi
+		load_config
+		sleep 1
+	fi
+	xsetroot -name "$(exec $DEFAULT_BAR_LOCATION)"
+done
